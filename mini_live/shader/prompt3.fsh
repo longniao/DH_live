@@ -1,34 +1,16 @@
-# version 330
-precision mediump float;
-in mediump vec2 v_texture;
-in mediump vec2 v_bias;
-out highp vec4 out_color;
+#version 120
 
-void main()
-{
-    if (v_texture.x == 2.0f)
-    {
-        out_color = vec4(1.0, 0.0, 0.0, 1.0);
+varying vec2 v_texture;
+varying vec2 v_bias;
+
+void main() {
+    float alpha = 1.0;
+    if (v_texture.x == -1.0) {
+        alpha = 0.0;
     }
-    else if (v_texture.x > 2.0f && v_texture.x < 2.1f)
-    {
-        out_color = vec4(0.5f, 0.0, 0.0, 1.0);
+    else if (v_texture.x < 3.0) {
+        float bias_len = length(v_bias);
+        alpha = clamp(1.0 - bias_len * 2.0, 0.0, 1.0);
     }
-    else if (v_texture.x == 3.0f)
-    {
-        out_color = vec4(0.0, 1.0, 0.0, 1.0);
-    }
-    else if (v_texture.x == 4.0f)
-    {
-        out_color = vec4(0.0, 0.0, 1.0, 1.0);
-    }
-    else if (v_texture.x > 3.0f && v_texture.x < 4.0f)
-    {
-        out_color = vec4(0.0, 0.0, 0.0, 1.0);
-    }
-    else
-    {
-        vec2 wrap = (v_bias.xy + 1.0)/2.0;
-        out_color = vec4(wrap.xy, 0.5, 1.0);
-    }
+    gl_FragColor = vec4(0.0, 0.0, 0.0, alpha);
 }

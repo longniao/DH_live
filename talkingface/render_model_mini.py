@@ -9,20 +9,28 @@ from talkingface.data.few_shot_dataset import select_ref_index
 device = "cuda" if torch.cuda.is_available() else "cpu"
 import pickle
 import cv2
+import torch.nn as nn
 
 from talkingface.utils import draw_mouth_maps
 
-class RenderModel_Mini:
+class RenderModel_Mini(nn.Module):
     def __init__(self):
+        super(RenderModel_Mini, self).__init__()
         self.__net = None
+        self.device = 'cpu'
 
     def loadModel(self, ckpt_path):
         from talkingface.models.DINet_mini import DINet_mini_pipeline as DINet
         n_ref = 3
         source_channel = 3
         ref_channel = n_ref * 4
-        self.net = DINet(source_channel, ref_channel).cuda()
-        checkpoint = torch.load(ckpt_path)
+        # Determine device
+        if torch.cuda.is_available():
+            self.device = torch.device("cuda")
+        else:
+            self.device = torch.device("cpu")
+        self.net = DINet(source_channel, ref_channel, cuda=(device=="cuda")).to(self.device)
+        checkpoint = torch.load(ckpt_path, map_location=self.device, weights_only=True)
         net_g_static = checkpoint['state_dict']['net_g']
         self.net.infer_model.load_state_dict(net_g_static)
         self.net.eval()
@@ -45,7 +53,7 @@ class RenderModel_Mini:
             ref_img_list.append(ref_img)
         self.ref_img = np.concatenate(ref_img_list, axis=2)
 
-        ref_tensor = torch.from_numpy(self.ref_img / 255.).float().permute(2, 0, 1).unsqueeze(0).cuda()
+        ref_tensor = torch.from_numpy(self.ref_img / 255.).float().permute(2, 0, 1).unsqueeze(0).to(self.device)
 
         self.net.ref_input(ref_tensor)
 

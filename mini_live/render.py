@@ -3,6 +3,13 @@ os.environ["kmp_duplicate_lib_ok"] = "true"
 import glfw
 from OpenGL.GL import *
 from OpenGL.GL.shaders import compileProgram, compileShader
+from OpenGL.GL import (
+    glGenBuffers, glBindBuffer, glBufferData, glEnableVertexAttribArray,
+    glVertexAttribPointer, glDrawElements, glDisableVertexAttribArray,
+    glGetAttribLocation, glUseProgram,
+    GL_ARRAY_BUFFER, GL_ELEMENT_ARRAY_BUFFER, GL_STATIC_DRAW,
+    GL_FLOAT, GL_FALSE, GL_TRIANGLES, GL_UNSIGNED_INT
+)
 import numpy as np
 import glm
 import os
@@ -12,11 +19,15 @@ from talkingface.utils import crop_mouth, main_keypoints_index
 current_dir = os.path.dirname(os.path.abspath(__file__))
 import cv2
 import torch.nn.functional as F
+
 class RenderModel_gl:
     def __init__(self, window_size):
         self.window_size = window_size
         if not glfw.init():
             raise Exception("glfw can not be initialized!")
+        # Request OpenGL 2.1 context
+        glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 2)
+        glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 1)
         glfw.window_hint(glfw.VISIBLE, glfw.FALSE)
         print(window_size[0], window_size[1])
         self.window = glfw.create_window(window_size[0], window_size[1], "Face Render window", None, None)
@@ -27,28 +38,85 @@ class RenderModel_gl:
         glfw.make_context_current(self.window)
         # shader 设置
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        self.program = compileProgram(compileShader(open(os.path.join(current_dir, "shader/prompt3.vsh")).readlines(), GL_VERTEX_SHADER),
-                                       compileShader(open(os.path.join(current_dir, "shader/prompt3.fsh")).readlines(), GL_FRAGMENT_SHADER))
+        shader_dir = os.path.join(current_dir, "shader")
+        vert_shader_path = os.path.join(shader_dir, "prompt3.vsh")
+        frag_shader_path = os.path.join(shader_dir, "prompt3.fsh")
+        
+        print(f"Loading vertex shader from: {vert_shader_path}")
+        print(f"Loading fragment shader from: {frag_shader_path}")
+        
+        with open(vert_shader_path, 'r') as f:
+            vert_shader = f.readlines()
+        with open(frag_shader_path, 'r') as f:
+            frag_shader = f.readlines()
+            
+        self.program = compileProgram(
+            compileShader(vert_shader, GL_VERTEX_SHADER),
+            compileShader(frag_shader, GL_FRAGMENT_SHADER)
+        )
+
+        # self.program = compileProgram(compileShader(open(os.path.join(current_dir, "shader/prompt3.vsh")).readlines(), GL_VERTEX_SHADER),
+                                    #    compileShader(open(os.path.join(current_dir, "shader/prompt3.fsh")).readlines(), GL_FRAGMENT_SHADER))
         self.VBO = glGenBuffers(1)
         self.render_verts = None
         self.render_face = None
         self.face_pts_mean = None
 
-    def setContent(self, vertices_, face):
-        glfw.make_context_current(self.window)
-        self.render_verts = vertices_
-        self.render_face = face
-        glUseProgram(self.program)
-        # set up vertex array object (VAO)
-        self.vao = glGenVertexArrays(1)
-        glBindVertexArray(self.vao)
-
-        self.GenVBO(vertices_)
-        self.GenEBO(face)
-
-        # unbind VAO
-        glBindVertexArray(0)
+    def setContent(self, verts, faces):
+        # Convert inputs to numpy arrays if they aren't already
+        self.verts = np.array(verts, dtype=np.float32)
+        self.faces = np.array(faces, dtype=np.uint32)
+        
+        # Generate and bind buffers
+        self.vbo = glGenBuffers(1)
+        self.ebo = glGenBuffers(1)
+        
+        # Bind and set vertex buffer
+        glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
+        glBufferData(GL_ARRAY_BUFFER, self.verts.nbytes, self.verts, GL_STATIC_DRAW)
+        
+        # Bind and set element buffer
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ebo)
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, self.faces.nbytes, self.faces, GL_STATIC_DRAW)
+        
+        # Get attribute locations
+        self.position_loc = glGetAttribLocation(self.program, "a_position")
+        self.texture_loc = glGetAttribLocation(self.program, "a_texture")
+        
+        # Unbind buffers
         glBindBuffer(GL_ARRAY_BUFFER, 0)
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0)
+
+    def render(self):
+        glUseProgram(self.program)
+        
+        # Bind buffers
+        glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ebo)
+        
+        # Enable and set vertex attributes
+        glEnableVertexAttribArray(self.position_loc)
+        glEnableVertexAttribArray(self.texture_loc)
+        
+        stride = self.verts.strides[0]
+        offset = ctypes.c_void_p(0)
+        
+        # Position attribute
+        glVertexAttribPointer(self.position_loc, 3, GL_FLOAT, GL_FALSE, stride, offset)
+        
+        # Texture coordinate attribute
+        tex_offset = ctypes.c_void_p(3 * 4)  # 3 floats * 4 bytes
+        glVertexAttribPointer(self.texture_loc, 2, GL_FLOAT, GL_FALSE, stride, tex_offset)
+        
+        # Draw
+        glDrawElements(GL_TRIANGLES, len(self.faces) * 3, GL_UNSIGNED_INT, None)
+        
+        # Cleanup
+        glDisableVertexAttribArray(self.position_loc)
+        glDisableVertexAttribArray(self.texture_loc)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0)
+        glUseProgram(0)
 
     def GenEBO(self, face):
         self.indices = np.array(face, dtype=np.uint32)
@@ -88,59 +156,48 @@ class RenderModel_gl:
         glEnableVertexAttribArray(1)
         glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, vertices.itemsize * 5, ctypes.c_void_p(12))
 
-    def render2cv(self, vertBuffer, out_size = (1000, 1000), mat_world=None, bs_array=None):
+    def render2cv(self, vertBuffer, out_size=(1000, 1000), mat_world=None, bs_array=None):
         glfw.make_context_current(self.window)
-        # 设置正交投影矩阵
-        # left = 0
-        # right = standard_size
-        # bottom = 0
-        # top = standard_size
-        # near = standard_size  # 近裁剪面距离
-        # far = -standard_size  # 远裁剪面距离
-        left = 0
-        right = out_size[0]
-        bottom = 0
-        top = out_size[1]
-        near = 1000  # 近裁剪面距离
-        far = -1000  # 远裁剪面距离
-
-        ortho_matrix = glm.ortho(left, right, bottom, top, near, far)
-        glUniformMatrix4fv(glGetUniformLocation(self.program, "gProjection"), 1, GL_FALSE, glm.value_ptr(ortho_matrix))
-
-        # print("ortho_matrix: ", ortho_matrix)
-
+        
+        # Set up orthographic projection
+        left = 0.0
+        right = float(out_size[0])
+        bottom = 0.0
+        top = float(out_size[1])
+        near = -1000.0  # Far clipping plane
+        far = 1000.0    # Near clipping plane
+        
+        # Create orthographic projection matrix using numpy
+        ortho_matrix = np.zeros((4, 4), dtype=np.float32)
+        ortho_matrix[0][0] = 2.0 / (right - left)
+        ortho_matrix[1][1] = 2.0 / (top - bottom)
+        ortho_matrix[2][2] = -2.0 / (far - near)
+        ortho_matrix[3][0] = -(right + left) / (right - left)
+        ortho_matrix[3][1] = -(top + bottom) / (top - bottom)
+        ortho_matrix[3][2] = -(far + near) / (far - near)
+        ortho_matrix[3][3] = 1.0
+        
         glUseProgram(self.program)
         glEnable(GL_DEPTH_TEST)
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         glEnable(GL_CULL_FACE)
-        # glEnable(GL_CULL_FACE)
-        glCullFace(GL_BACK)  # 剔除背面
-        glFrontFace(GL_CW)  # 通常顶点顺序是顺时针
+        glCullFace(GL_BACK)
+        glFrontFace(GL_CW)
         glClearColor(0.5, 0.5, 0.5, 0)
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
-        # # 设置视口
-        # glViewport(100, 0, self.window_size[0], self.window_size[1])
-
-
         glUniform1i(glGetUniformLocation(self.program, "texture_bs"), 0)
+        glUniformMatrix4fv(glGetUniformLocation(self.program, "gProjection"), 1, GL_FALSE, ortho_matrix)
         glUniformMatrix4fv(glGetUniformLocation(self.program, "gWorld0"), 1, GL_FALSE, mat_world)
         glUniform1fv(glGetUniformLocation(self.program, "bsVec"), 12, bs_array.astype(np.float32))
-
         glUniform2fv(glGetUniformLocation(self.program, "vertBuffer"), 209, vertBuffer.astype(np.float32))
 
-        glUniformMatrix4fv(glGetUniformLocation(self.program, "gProjection"), 1, GL_FALSE, glm.value_ptr(ortho_matrix))
-        # bind VAO
-        glBindVertexArray(self.vao)
-        # draw
-        glDrawElements(GL_TRIANGLES, self.indices.size, GL_UNSIGNED_INT, None)
-        # unbind VAO
-        glBindVertexArray(0)
+        # Draw using the updated render method
+        self.render()
 
         glfw.swap_buffers(self.window)
         glReadBuffer(GL_FRONT)
-        # 从缓冲区中的读出的数据是字节数组
         data = glReadPixels(0, 0, self.window_size[0], self.window_size[1], GL_RGBA, GL_UNSIGNED_BYTE, outputType=None)
         rgb = data.reshape(self.window_size[1], self.window_size[0], -1).astype(np.uint8)
         return rgb

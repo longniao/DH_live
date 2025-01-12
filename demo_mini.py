@@ -81,6 +81,17 @@ def run(video_path, pkl_path, wav_path, output_video_path):
     save_path = "{}.mp4".format(task_id)
     videoWriter = cv2.VideoWriter(save_path, fourcc, 25, (int(vid_width), int(vid_height)))
 
+    # Determine the device to use
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+
+    print(f"Using device: {device}")
+
+    # Move model to the appropriate device
+    renderModel_mini = renderModel_mini.to(device)
+
     for frame_index in range(len(mat_list)):
         if frame_index >= len(bs_array):
             continue
@@ -96,11 +107,11 @@ def run(video_path, pkl_path, wav_path, output_video_path):
         # rgba = cv2.resize(rgba, (128, 128))
         rgba = rgba[::2, ::2, :]
 
-        gl_tensor = torch.from_numpy(rgba / 255.).float().permute(2, 0, 1).unsqueeze(0)
+        gl_tensor = torch.from_numpy(rgba / 255.).float().permute(2, 0, 1).unsqueeze(0).to(device)
         source_tensor = cv2.resize(list_standard_img[frame_index], (128, 128))
-        source_tensor = torch.from_numpy(source_tensor / 255.).float().permute(2, 0, 1).unsqueeze(0)
+        source_tensor = torch.from_numpy(source_tensor / 255.).float().permute(2, 0, 1).unsqueeze(0).to(device)
 
-        warped_img = renderModel_mini.interface(source_tensor.cuda(), gl_tensor.cuda())
+        warped_img = renderModel_mini.interface(source_tensor, gl_tensor)
 
         image_numpy = warped_img.detach().squeeze(0).cpu().float().numpy()
         image_numpy = np.transpose(image_numpy, (1, 2, 0)) * 255.0

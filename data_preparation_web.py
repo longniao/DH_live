@@ -268,7 +268,7 @@ def step3_generate_ref_tensor(list_source_crop_rect, list_standard_v, out_path):
         ref_img_list.append(ref_img)
     ref_img = np.concatenate(ref_img_list, axis=2)
 
-    ref_tensor = torch.from_numpy(ref_img / 255.).float().permute(2, 0, 1).unsqueeze(0).cuda()
+    ref_tensor = torch.from_numpy(ref_img / 255.).float().permute(2, 0, 1).unsqueeze(0).to(renderModel_mini.device)
 
     renderModel_mini.net.ref_input(ref_tensor)
 
